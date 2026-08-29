@@ -20,7 +20,12 @@
     font-family:'JetBrains Mono', monospace;
     background:#050505;
     display:flex; align-items:center; justify-content:center;
-    min-height:100vh; overflow:auto; padding:32px;
+    min-height:100vh; min-height:100dvh; overflow:auto; padding:32px;
+  }
+  /* 터치 기기(호버 불가)에서는 글로우/커서 등 hover 전용 스타일을 아예 무력화 */
+  @media (hover:none){
+    .char-visual.hover{ filter:none; }
+    .hit-layer{ cursor:default !important; }
   }
 
   /* 사이트 전체를 감싸는 프레임: 화면을 꽉 채우지 않고 중앙에 살짝 축소된 크기로 배치 */
@@ -164,11 +169,14 @@
   }
 
   @media (max-width:760px){
+    body{ padding:0; }
+    .site{ width:100vw; border-radius:0; box-shadow:none; }
     .panel{ width:85%; }
     .panel-topbar{ padding:22px 20px 16px 24px; }
     .panel-image{ margin:18px 20px 0; }
-    .panel-info{ padding:18px 20px 30px; }
+    .panel-info{ padding:18px 20px 30px; max-height:calc(100dvh - 260px); }
     .brand{ top:16px; left:18px; font-size:12px; }
+    .tooltip{ display:none; } /* 모바일은 탭=바로 상세 오픈이라 커서 툴팁 자체가 불필요 */
   }
   @media (prefers-reduced-motion: reduce){ *{ transition:none !important; } }
 </style>
@@ -426,7 +434,22 @@
     tooltip.classList.remove('show');
   });
 
+  // ---- 터치 기기: hover 개념이 없으므로 탭 = 즉시 상세 오픈 ----
+  // touchstart에서 먼저 처리하고, 뒤이어 브라우저가 발생시키는 합성 click은
+  // touchHandled 플래그로 걸러서 openDetail이 두 번 불리지 않게 한다.
+  let touchHandled = false;
+  hitLayer.addEventListener('touchstart', (e) => {
+    if (activeId) return; // 패널이 열린 상태의 탭은 bgDim/panel 쪽에서 처리됨
+    const t = e.changedTouches[0];
+    const hit = hitTest(t.clientX, t.clientY);
+    if (hit){
+      touchHandled = true;
+      openDetail(hit);
+    }
+  }, { passive:true });
+
   hitLayer.addEventListener('click', (e) => {
+    if (touchHandled){ touchHandled = false; return; }
     const hit = hitTest(e.clientX, e.clientY);
     if (hit) openDetail(hit);
     else if (activeId) closeDetail();
@@ -438,7 +461,10 @@
   });
 
   bgDim.addEventListener('click', closeDetail);
-  document.getElementById('panelClose').addEventListener('click', closeDetail);
+  bgDim.addEventListener('touchstart', closeDetail, { passive:true });
+  const panelCloseBtn = document.getElementById('panelClose');
+  panelCloseBtn.addEventListener('click', closeDetail);
+  panelCloseBtn.addEventListener('touchstart', (e) => { e.preventDefault(); closeDetail(); });
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') closeDetail();
   });
