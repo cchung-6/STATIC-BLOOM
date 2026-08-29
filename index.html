@@ -29,13 +29,15 @@
   }
 
   /* 사이트 전체를 감싸는 프레임: 화면을 꽉 채우지 않고 중앙에 살짝 축소된 크기로 배치 */
+  /* 기본값(JS 미실행 시 대비용) — 실제 크기는 JS가 window 크기를 재서 인라인 style로 덮어씀 */
   .site{
     position:relative;
     width:min(88vw, 1320px, calc(88vh * 1801 / 1200));
-    aspect-ratio:1801 / 1200;
+    aspect-ratio:1801 / 1200; /* JS 로드 전 잠깐 보이는 기본 비율(JS가 곧 width/height를 직접 덮어씀) */
     overflow:hidden;
     border-radius:12px;
     box-shadow:0 30px 90px rgba(0,0,0,.7), 0 0 0 1px rgba(255,255,255,.07);
+    flex:0 0 auto;
   }
 
   /* ---------- 무대 ---------- */
@@ -169,12 +171,10 @@
   }
 
   @media (max-width:760px){
-    body{ padding:0; align-items:stretch; }
-    .site{ width:100vw; height:100dvh; aspect-ratio:unset; border-radius:0; box-shadow:none; }
-    .stage{ height:100%; }
-    /* .site(=stage) 세로폭이 배경 비율 탓에 좁아지므로,
-       패널은 그 안에 갇히지 않고 화면(뷰포트) 기준으로 고정시켜 항상 꽉 찬 높이로 뜨게 함 */
-    .panel{ position:fixed; top:0; height:100dvh; width:100%; }
+    body{ padding:0; }
+    .site{ border-radius:0; box-shadow:none; }
+    /* 패널은 .site 크기에 갇히지 않고 화면(뷰포트) 전체 기준으로 고정 — .site 세로폭이 좁아도 항상 꽉 찬 높이로 뜸 */
+    .panel{ position:fixed; top:0; right:0; height:100dvh; width:100%; }
     .panel.panel-left{ right:auto; left:0; }
     .panel-topbar{ padding:22px 20px 16px 24px; flex:0 0 auto; }
     .panel-image{ margin:18px 20px 0; flex:0 0 auto; }
@@ -269,15 +269,55 @@
   let switchTimer = null;
   const alphaMaps = {}; // id -> { w, h, data } | null(CORS 등으로 못 읽은 경우)
 
+  // CSS의 vh/dvh는 모바일 브라우저 주소창 유무에 따라 오차가 생기기 쉬워서,
+  // 실제 보이는 창 크기(window.innerWidth/innerHeight)를 JS로 직접 재서
+  // .site 크기를 강제로 계산한다(비율 1801:1200 유지, 화면 안에 완전히 들어가도록).
+  const SITE_RATIO = 1801 / 1200;
+  function fitSiteToViewport(){
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    const isMobile = vw <= 760;
+    const padding = isMobile ? 0 : 32; // body 기본 padding과 동일하게 맞춤
+    const maxW = vw - padding * 2;
+    const maxH = vh - padding * 2;
+    let w = maxW;
+    let h = w / SITE_RATIO;
+    if (h > maxH){
+      h = maxH;
+      w = h * SITE_RATIO;
+    }
+    site.style.width  = Math.floor(w) + 'px';
+    site.style.height = Math.floor(h) + 'px';
+  }
+  fitSiteToViewport();
+  window.addEventListener('resize', fitSiteToViewport);
+  window.addEventListener('orientationchange', () => setTimeout(fitSiteToViewport, 50));
+  const fallbackBoxes = {}; // id -> {minX,minY,maxX,maxY} (0~1 비율) — 알파맵 실패 시 사각형 판정용
+
   function visualOf(id){ return document.querySelector('.char-visual[data-id="' + id + '"]'); }
 
+  // 알파맵이 실패했을 때를 대비해, 같은 캔버스에서 "불투명 픽셀의 대략적인 사각 범위"도 함께 계산해둔다.
+  function computeFallbackBox(id, w, h, data){
+    let minX=w, minY=h, maxX=0, maxY=0, found=false;
+    for (let y=0; y<h; y+=2){
+      for (let x=0; x<w; x+=2){
+        if (data[(y*w+x)*4+3] > ALPHA_THRESHOLD){
+          found = true;
+          if (x<minX) minX=x; if (x>maxX) maxX=x;
+          if (y<minY) minY=y; if (y>maxY) maxY=y;
+        }
+      }
+    }
+    if (!found) return null;
+    return { minX:minX/w, minY:minY/h, maxX:maxX/w, maxY:maxY/h };
+  }
+
   // 각 캐릭터 PNG를 오프스크린 캔버스에 그려서 알파(투명도) 값을 읽어둔다.
-  // raw.githubusercontent.com이 CORS를 허용해줘야 정상 동작함(공개 레포는 보통 허용됨).
+  // index.html과 같은 저장소(같은 오리진)의 상대경로 이미지이므로 CORS 설정이 필요 없음.
   function buildAlphaMaps(){
     const jobs = CHAR_IDS.map(id => new Promise(resolve => {
       const src = visualOf(id).src;
       const img = new Image();
-      img.crossOrigin = 'anonymous';
       img.onload = () => {
         const scale = SAMPLE_WIDTH / img.naturalWidth;
         const w = SAMPLE_WIDTH, h = Math.max(1, Math.round(img.naturalHeight * scale));
@@ -286,10 +326,12 @@
         const ctx = canvas.getContext('2d', { willReadFrequently:true });
         ctx.drawImage(img, 0, 0, w, h);
         try{
-          alphaMaps[id] = { w, h, data: ctx.getImageData(0, 0, w, h).data };
+          const data = ctx.getImageData(0, 0, w, h).data;
+          alphaMaps[id] = { w, h, data };
+          fallbackBoxes[id] = computeFallbackBox(id, w, h, data);
         }catch(err){
           alphaMaps[id] = null;
-          console.warn('[StaticBloom] ' + id + ' 알파 판정 실패(CORS?) — 이 인물은 클릭이 반응하지 않을 수 있음.', err);
+          console.warn('[StaticBloom] ' + id + ' 알파 판정 실패(CORS?) — 사각형 히트박스로 대체합니다.', err);
         }
         resolve();
       };
@@ -301,10 +343,17 @@
 
   function alphaAt(id, nx, ny){
     const m = alphaMaps[id];
-    if (!m) return 0;
+    if (!m) return -1; // -1: 알파맵 자체가 없음(대체 판정 필요) / 0: 알파맵은 있는데 투명한 지점
     const x = Math.min(m.w - 1, Math.max(0, Math.floor(nx * m.w)));
     const y = Math.min(m.h - 1, Math.max(0, Math.floor(ny * m.h)));
     return m.data[(y * m.w + x) * 4 + 3];
+  }
+
+  // 알파맵이 없는(CORS 등으로 실패한) 캐릭터는, 미리 계산해둔 대략적인 사각 범위로 대신 판정
+  function hitsFallbackBox(id, nx, ny){
+    const b = fallbackBoxes[id];
+    if (!b) return false;
+    return nx >= b.minX && nx <= b.maxX && ny >= b.minY && ny <= b.maxY;
   }
 
   // 화면 좌표 -> .site 기준 0~1 비율로 바꾼 뒤, 각 인물 PNG의 알파값을 검사
@@ -315,7 +364,12 @@
     if (nx < 0 || nx > 1 || ny < 0 || ny > 1) return null;
     for (let i = CHAR_IDS.length - 1; i >= 0; i--){
       const id = CHAR_IDS[i];
-      if (alphaAt(id, nx, ny) > ALPHA_THRESHOLD) return id;
+      const a = alphaAt(id, nx, ny);
+      if (a === -1){
+        if (hitsFallbackBox(id, nx, ny)) return id;
+      } else if (a > ALPHA_THRESHOLD){
+        return id;
+      }
     }
     return null;
   }
