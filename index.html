@@ -169,12 +169,16 @@
   }
 
   @media (max-width:760px){
-    body{ padding:0; }
-    .site{ width:100vw; border-radius:0; box-shadow:none; }
-    .panel{ width:85%; }
-    .panel-topbar{ padding:22px 20px 16px 24px; }
-    .panel-image{ margin:18px 20px 0; }
-    .panel-info{ padding:18px 20px 30px; max-height:calc(100dvh - 260px); }
+    body{ padding:0; align-items:stretch; }
+    .site{ width:100vw; height:100dvh; aspect-ratio:unset; border-radius:0; box-shadow:none; }
+    .stage{ height:100%; }
+    /* .site(=stage) 세로폭이 배경 비율 탓에 좁아지므로,
+       패널은 그 안에 갇히지 않고 화면(뷰포트) 기준으로 고정시켜 항상 꽉 찬 높이로 뜨게 함 */
+    .panel{ position:fixed; top:0; height:100dvh; width:100%; }
+    .panel.panel-left{ right:auto; left:0; }
+    .panel-topbar{ padding:22px 20px 16px 24px; flex:0 0 auto; }
+    .panel-image{ margin:18px 20px 0; flex:0 0 auto; }
+    .panel-info{ padding:18px 20px 30px; flex:1 1 auto; min-height:0; overflow-y:auto; -webkit-overflow-scrolling:touch; }
     .brand{ top:16px; left:18px; font-size:12px; }
     .tooltip{ display:none; } /* 모바일은 탭=바로 상세 오픈이라 커서 툴팁 자체가 불필요 */
   }
